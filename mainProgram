@@ -1,0 +1,267 @@
+/* OpenProcessing Tweak of *@*http://www.openprocessing.org/sketch/6219*@* */
+//Mixed with original code from: http://murderandcreate.com/physics/
+// modified by franklin hernandez-castro
+// tec costa rica 2012Pins networkPins network
+
+// modified & comments by Veronica Alfaro & Antonio Solano, tec costa rica 2013, d7v
+
+
+//declare ___________________________________________________________________________
+
+//imports
+import traer.physics.*;
+import ddf.minim.*;
+import ddf.minim.signals.*;
+import ddf.minim.effects.*;
+import processing.opengl.*;
+import SimpleOpenNI.*;
+import peasy.*;
+
+//traer objects
+ParticleSystem physics; //declare the particle system
+Particle[][] p;  //declare array p
+Particle[][] orgParticles;  //declare fixed particle array
+Particle[] points;  //declare array p
+Particle mouse;  //declare mouse-particle object
+Spring [][] mySprings;  //declare spring array
+
+//minim objects
+Minim minim; //declare the minim system
+AudioOutput out; //declare the outpot system
+SquareWave square; //declare the square sound function
+LowPassSP lowpass; //declare the lowpass effect
+NotchFilter ntf; //declare the notch filter effect
+
+//kinect objects
+PeasyCam myCamera;
+SimpleOpenNI kinectWord;
+
+//particle placement
+int NUM_PARTICLES_X = 79;  //amount of particles on x axis
+int NUM_PARTICLES_Y = 35;  //amount of particles on y axis
+int NUM_POINTS = 700;
+
+int gridsizeX_E = 975*4; //even points
+int gridsizeY_E = 736*4;
+
+int gridsizeX_O = 975*4; //odd points
+int gridsizeY_O = 736*4;
+
+float xPos = 0;
+float yPos = 0;
+float pointPos = 0;
+
+int side = 800;
+
+int closestValue, closestX, closestY;
+
+void setup()
+{
+  frameRate(60);
+  size(1024, 768, OPENGL);
+  rotateX(radians(180));
+  colorMode(HSB, 100);
+  //smooth();
+  kinectWord = new SimpleOpenNI(this);
+  kinectWord.enableDepth();
+  kinectWord.setMirror(true);
+
+  myCamera = new PeasyCam(this, 512, -300, 100, 200); // x,y,z,sphere radio
+
+  //for traer __________________________________________________________________________
+
+  physics = new ParticleSystem(0.0, 3);  //create particle system
+  mouse = physics.makeParticle();
+  mouse.makeFixed();
+
+  p = new Particle[NUM_PARTICLES_X][NUM_PARTICLES_Y]; //create particle array 
+  orgParticles = new Particle[NUM_PARTICLES_X][NUM_PARTICLES_Y]; // fixed particle array
+  mySprings = new Spring[NUM_PARTICLES_X][NUM_PARTICLES_Y];  //create spring array
+  points = new Particle[NUM_POINTS]; //create points particle array
+
+  // point particle cicle
+  for (int ip = 0; ip < NUM_POINTS; ip++) {
+
+    points[ip] = physics.makeParticle(1.0, 0, 0, 0);
+    points[ip].makeFixed();
+  } //end of point particle cicle
+
+  // p particle cicle
+  for (int iy = 0; iy < NUM_PARTICLES_Y; iy++) { 
+    for (int ix = 0; ix < NUM_PARTICLES_X; ix++) {
+
+      if (iy%2==0 && ix%2==0) { //for the even points
+
+        yPos = iy * (gridsizeY_E/(NUM_PARTICLES_Y-1)) + (25 + height - gridsizeY_E)/2;
+        xPos = ix * (gridsizeX_E/(NUM_PARTICLES_X-1)) + (25 + width - gridsizeX_E)/2;
+      }
+
+      if (iy%2==1 && ix%2==1) { //for the odd points
+
+        yPos = iy * (gridsizeY_O/(NUM_PARTICLES_Y-1)) + (25+ height - gridsizeY_O)/2;
+        xPos = ix * (gridsizeX_O/(NUM_PARTICLES_X-1)) + (25 + width - gridsizeX_O)/2;
+
+        //** had to add 25 to offset the grid **
+      }
+
+      //create particle with mass 10
+      p[ix][iy] = physics.makeParticle(9.0, xPos, yPos, 2200);
+
+      orgParticles[ix][iy] = physics.makeParticle(0, xPos, yPos, 2200);
+      orgParticles[ix][iy].makeFixed();
+
+      //create springs between particles and fixed particles makeSpring( Particle a, Particle b, float strength, float damping, float restLength )
+      mySprings[ix][iy]= physics.makeSpring(p[ix][iy], orgParticles[ix][iy], 10, 10, 150);
+    }
+  } //end of p particle cicle
+
+
+  for (int ip = 0; ip < NUM_POINTS; ip++) {
+    for (int iy = 0; iy < NUM_PARTICLES_Y; iy++) { 
+      for (int ix = 0; ix < NUM_PARTICLES_X; ix++) {
+
+        //attraction between mouse and particles
+        physics.makeAttraction( p[ix][iy], points[ip], 20000, 3);
+      }
+    }
+  }
+
+  //for minim __________________________________________________________________________
+
+  minim = new Minim(this);  //create sound system
+
+  // get a stereo line out with a sample buffer of 512 samples
+  out = minim.getLineOut(Minim.STEREO, 512);
+
+  // create a SquareWave with a frequency of 1 Hz, (this will be mapped)
+  // an amplitude of 1 and the same sample rate as out
+  square = new SquareWave(1, 5, 44100);
+
+  // create a LowPassSP filter with a cutoff frequency of 70 Hz 
+  // that expects audio with the same sample rate as out
+  lowpass = new LowPassSP(70, 44100);
+
+  ntf = new NotchFilter(1000, 500, 44100); //so it doesn't sound terribly
+
+  //out.setGain(1);
+
+  // Attach the square wave and the filter to our output
+  out.addSignal(square);
+  out.addEffect(lowpass);
+  out.addEffect(ntf);
+  //out.printControls();
+}//end of setup
+
+
+//draw _______________________________________________________________________________
+void draw() {
+  background(60, 0, 0);
+  kinectWord.update();
+  //fill(250);
+  rotateX(radians(180));// flip the point cloud vertically
+  //noStroke();
+  //fill (0, 30);
+  //rect(0, 0, width, height);
+  physics.tick();
+  connectParticles();
+  closestPixel();
+
+
+
+  beginShape();
+
+  //vertex(p[0][0].position().x(), p[0][0].position().y(), p[0][0].position().z()); 
+
+  //create lines between each point (tesselation)
+  for (int iy = 0; iy < NUM_PARTICLES_Y; iy++) {
+    for (int ix = 0; ix < NUM_PARTICLES_X; ix++) {
+
+
+      //ellipse(p[ix][iy].position().x(), p[ix][iy].position().y(), 3, 3);  //don't remove! used for particle placement
+
+      if (ix< NUM_PARTICLES_X && iy< NUM_PARTICLES_Y && iy>0 && ix>0 && ix<78 && iy<34) {//conditions to create grid
+      
+        vertex (p[ix][iy].position().x(), p[ix][iy].position().y(), p[ix][iy].position().z());
+        vertex (p[ix+1][iy].position().x(), p[ix+1][iy].position().y(), p[ix+1][iy].position().z());
+
+        vertex (p[ix][iy].position().x(), p[ix][iy].position().y(), p[ix][iy].position().z());
+        vertex (p[ix][iy+1].position().x(), p[ix][iy+1].position().y(), p[ix][iy+1].position().z());
+        println(p[ix][iy].velocity().x());
+
+        //if (p[ix][iy].velocity().x() > -0.7  && p[ix][iy].velocity().x() < -0.4) {
+
+
+        strokeWeight(random(0.5, 1.2));
+        noFill();
+        float hue = map(closestX, 25, width-25, (random(40, 50)+5), random(50, 60)+5);       
+        stroke(hue, 100, (random(50)+50));
+        //stroke (60, 100, 100);
+
+
+        /*}
+         
+         else {
+         noFill();
+         noStroke();
+         }*/
+      }
+    }
+  } //end of line cicle
+  endShape();
+
+  frame.setTitle(int(frameRate) + " fps");
+} //end of draw
+
+void connectParticles() {
+  PVector[] pointRealDepths = kinectWord.depthMapRealWorld();
+  int drawDensity = 85; // only draw every 10th point to make things faster
+  int count = 0;
+
+  for (int i = 0; i < pointRealDepths.length; i+=drawDensity) {
+    PVector currentPoint = pointRealDepths[i];
+
+    if (currentPoint.z < 2500 && count < NUM_POINTS) { //drawn only between 50 and 150 cm away
+      //point(currentPoint.x+450, currentPoint.y+400, currentPoint.z-800);
+
+      points[count].position().set(1.5*currentPoint.x+450, 1.5*currentPoint.y+400, currentPoint.z);
+      count++;
+    }
+  }
+}
+
+
+void closestPixel() {
+  closestValue =2500; // begin again each frame
+  kinectWord.update();
+  int [] pointDepths = kinectWord.depthMap ();//get depth array from kinect
+  for (int y = 0; y < 480; y++) {
+    for (int x = 0; x < 640; x++) {
+      int i = x+ y*640;// transformation between the 1-dimensional and 2-dimensional array
+      int currentDepthValue = pointDepths[i];
+
+      if (currentDepthValue>0 && currentDepthValue<closestValue) {
+        closestValue=currentDepthValue; // depth
+        closestX=x; // coordinates in picture
+        closestY=y;
+      } // end if
+    } // end for x
+  }// end for y
+
+    //image(kinectWord.depthImage(), 0, 0); //draw depth image on screen
+  //fill(255, 0, 0);
+  //ellipse (closestX, closestY, 25, 25); // draw a circle in closest position
+
+  float SquareWave = map(closestX, 0, width, 3, 100);
+  square.setFreq(SquareWave);
+
+  float pan = map(closestX, 0, width, -1, 1);
+  square.setPan(pan);
+} 
+
+void stop() //stop minim 
+{
+  out.close();
+  minim.stop();
+
+  super.stop();
+}
